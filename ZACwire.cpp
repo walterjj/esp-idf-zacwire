@@ -4,26 +4,21 @@
 */
 
 #include "ZACwire.h"
-#include "Arduino.h"
-
-#if !defined(ESP32) && !defined(ESP8266)			//initialize static variables for AVR boards
-	uint8_t ZACwire::bitThreshold;
-	uint16_t ZACwire::measuredTimeDiff;
-	volatile uint8_t ZACwire::bitCounter;
-	volatile bool ZACwire::backUP;
-	volatile uint16_t ZACwire::rawData[2];
-	volatile uint8_t ZACwire::heartbeat;
-#endif
 
 
-ZACwire::ZACwire(uint8_t pin, int16_t sensor) : _pin{pin}, _sensor{sensor} {
+
+
+
+ZACwire::ZACwire(gpio_num_t pin, int16_t sensor) : _pin{pin}, _sensor{sensor} {
 	bitCounter = 0;
 	bitThreshold = 0;
 }
 
 
 bool ZACwire::begin() {						//start collecting data, needs to be called over 2ms before first getTemp()
-	pinMode(_pin, INPUT_PULLUP);
+	gpio_reset_pin(_pin);
+        gpio_set_direction(_pin, GPIO_MODE_INPUT);
+        gpio_set_pull_mode(_pin, GPIO_PULLUP_ONLY);
 	for (uint8_t i=20; pulseIn(_pin,LOW,500);) {		//wait for time without transmission
 		if (!--i) return false;
 		yield();					
@@ -32,14 +27,9 @@ bool ZACwire::begin() {						//start collecting data, needs to be called over 2m
 	if (!strobeTime) return false;				//abort if there is no incoming signal
 	measuredTimeDiff = micros();				//set timestamp of first rising edge for ISR
 	bitThreshold = strobeTime * 2.5;
-	
-	uint8_t isrPin = digitalPinToInterrupt(_pin);
-	if (isrPin == 255) return false;
-	#if defined(ESP32) || defined(ESP8266)
-		attachInterruptArg(isrPin, isrHandler, this, RISING);
-	#else
-		attachInterrupt(isrPin, read, RISING);
-	#endif
+	gpio_install_isr_service(ESP_INTR_FLAG_LOWMED);
+	gpio_set_intr_type(_pin, GPIO_INTR_POSEDGE);
+	gpio_isr_handler_add(_pin, isrHandler,this);
 	return true;
 }
 
@@ -68,7 +58,8 @@ float ZACwire::getTemp(uint8_t maxChangeRate, bool useBackup) {	//return tempera
 
 
 void ZACwire::end() {
-	detachInterrupt(digitalPinToInterrupt(_pin));
+	gpio_isr_handler_remove(_pin);
+	gpio_uninstall_isr_service();
 }
 
 

@@ -5,19 +5,14 @@
 
 #ifndef ZACwire_h
 #define ZACwire_h
-
-#include "Arduino.h"
-
-#if defined(ESP32) || defined(ESP8266)
-	#define STATIC
-#else
-	#define IRAM_ATTR
-	#define STATIC static
-#endif
+#include <stddef.h>
+#include <stdint.h>
+#include "driver/gpio.h"
+#include "esp_system.h"
 
 class ZACwire {
 	public:
-		explicit ZACwire(uint8_t inputPin, int16_t sensor=306);
+		explicit ZACwire(gpio_num_t inputPin, int16_t sensor=306);
 		
 		bool begin();					//start reading
 		
@@ -33,7 +28,7 @@ class ZACwire {
 		
 		static void IRAM_ATTR isrHandler(void* ptr);
 		
-		STATIC void IRAM_ATTR read();			//ISR to record every rising edge
+		void IRAM_ATTR read();			//ISR to record every rising edge
 		
 		bool connectionCheck();				//check heartbeat of the ISR
 		
@@ -41,19 +36,18 @@ class ZACwire {
 
 		bool tempCheck(uint16_t rawTemp);		//validate the received temperature
 
-		uint8_t _pin;
+		gpio_num_t _pin;
 		int16_t _sensor;
 		uint32_t timeLastHB{};				//timestamp, when ISR stopped sending heartbeats
 		int16_t prevTemp{};				//to calculate the change rate
 
-		STATIC uint16_t measuredTimeDiff;		//measured time between rising edges of signal
-		STATIC uint8_t bitThreshold;
-		STATIC volatile uint8_t bitCounter;
-		STATIC volatile uint8_t heartbeat;
-		STATIC volatile bool backUP;
-		STATIC volatile uint16_t rawData[2];
+		uint16_t measuredTimeDiff;		//measured time between rising edges of signal
+		uint8_t bitThreshold;
+		volatile uint8_t bitCounter;
+		volatile uint8_t heartbeat;
+		volatile bool backUP;
+		volatile uint16_t rawData[2];
 };
 
-#undef STATIC
 
 #endif
