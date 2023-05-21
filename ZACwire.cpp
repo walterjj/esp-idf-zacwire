@@ -1,123 +1,114 @@
 /*	ZACwire - Library for reading temperature sensors TSIC 206/306/506
-	created by Adrian Immer in 2020
-	v2.0.0
+	created by Adrian Immer in 2020 -  Version 2.0.0
+
+	ESP-IDF port by Walter Jerusalinsky in 2023  -  Version 2.1.0
+	Added support for 14 bit sensors (TSIC 716) 
+	v2.1.0
 */
 
 #include "ZACwire.h"
+#include "esp_timer.h"
 
-
-
-
-
-ZACwire::ZACwire(gpio_num_t pin, int16_t sensor) : _pin{pin}, _sensor{sensor} {
-	bitCounter = 0;
-	bitThreshold = 0;
+ZACwire::ZACwire(gpio_num_t pin, int16_t sensor) : _pin{pin}, _sensor{sensor}
+{
+	pulseCounter = -2;
 }
 
-
-bool ZACwire::begin() {						//start collecting data, needs to be called over 2ms before first getTemp()
+bool ZACwire::begin()
+{ // start collecting data, needs to be called over 2ms before first getTemp()
 	gpio_reset_pin(_pin);
-        gpio_set_direction(_pin, GPIO_MODE_INPUT);
-        gpio_set_pull_mode(_pin, GPIO_PULLUP_ONLY);
-	for (uint8_t i=20; pulseIn(_pin,LOW,500);) {		//wait for time without transmission
-		if (!--i) return false;
-		yield();					
-	}
-	uint8_t strobeTime = pulseIn(_pin, LOW);		//check for signal and measure strobeTime
-	if (!strobeTime) return false;				//abort if there is no incoming signal
-	measuredTimeDiff = micros();				//set timestamp of first rising edge for ISR
-	bitThreshold = strobeTime * 2.5;
+	gpio_set_direction(_pin, GPIO_MODE_INPUT);
+	gpio_set_pull_mode(_pin, GPIO_PULLUP_ONLY);
 	gpio_install_isr_service(ESP_INTR_FLAG_LOWMED);
-	gpio_set_intr_type(_pin, GPIO_INTR_POSEDGE);
-	gpio_isr_handler_add(_pin, isrHandler,this);
+	gpio_set_intr_type(_pin, GPIO_INTR_ANYEDGE);
+	gpio_isr_handler_add(_pin, isrHandler, this);
 	return true;
 }
 
-
-float ZACwire::getTemp(uint8_t maxChangeRate, bool useBackup) {	//return temperature in °C
-	if (connectionCheck()) adjustBitThreshold();
-	else return errorNotConnected;
-	
-	if (bitCounter != Bit::finished) useBackup = true;	//when newer reading is incomplete
-	uint16_t temp{rawData[backUP^useBackup]};		//get rawData from ISR
-	
-	if (tempCheck(temp)) {
-		temp >>= 1;					//delete second parity bit
-		temp = (temp >> 2 & 1792) | (temp & 255);	//delete first    "     "
-		if (!prevTemp) prevTemp = temp;
-		int16_t grad = (temp - prevTemp) / (heartbeat|1);//grad is [°C/s]
-		if (abs(grad) < maxChangeRate) {		//limit change rate to detect misreadings
-			prevTemp = temp;
-			heartbeat = 0;
-			if (_sensor < 400) return ((temp * 250L >> 8) - 499) / 10.0; //use different formula for 206&306 or 506
-			else return ((temp * 175L >> 9) - 99) / 10.0;
-		}
+float ZACwire::getTemp()
+{	int64_t time = esp_timer_get_time();
+	while(pulseCounter!=-1){ // wait for end of reading
+		if(esp_timer_get_time()-time > timeout*1000)
+			return errorNotConnected;
 	}
-	return useBackup ? errorMisreading : getTemp(maxChangeRate,!useBackup); //restart with backUP rawData or return error value 222
+	// return temperature in °C
+	gpio_intr_disable(_pin);
+	int temp = this->temp;
+	gpio_intr_enable(_pin);
+	if (_sensor < 316) // LT=-50 HT=150 11 bits
+		return ((temp * 200.0 / 2047) - 50.0);
+	else if(_sensor==316) // LT=-50°C HT=150°C 14 bits
+		return ((temp * 200.0 / 16383) - 50.0);
+	else if(_sensor < 516) // LT=-10°C HT=60°C 11 bits
+		return ((temp * 70.0 / 2047) - 10.0);
+	else if(_sensor==516) // LT=-10°C HT=60°C 14 bits
+		return ((temp * 70.0 / 16383) - 10.0);
+	else	// 716
+		return ((temp * 70.0 / 16383) - 10.0);
 }
 
-
-void ZACwire::end() {
+void ZACwire::end()
+{
 	gpio_isr_handler_remove(_pin);
 	gpio_uninstall_isr_service();
 }
 
-
-void ZACwire::isrHandler(void* ptr) {
-    static_cast<ZACwire*>(ptr)->read();
+void ZACwire::isrHandler(void *ptr)
+{
+	static_cast<ZACwire *>(ptr)->read();
 }
 
-
-void ZACwire::read() {						//get called with every rising edge
-	if (++bitCounter < Bit::lastZero) return;		//first 4 bits always =0
-	uint16_t microtime = micros();
-	measuredTimeDiff = microtime - measuredTimeDiff;	//measure time to previous rising edge
-	if (measuredTimeDiff >> 10) {				//first start bit, so big time difference
-		if (bitCounter == 20) {
-			backUP = !backUP; 			//save backup, if it successfully counted 20 bits
-			++heartbeat;				//give a sign of life to getTemp()
+void ZACwire::read()
+{ 	// get called with every rising and falling edge
+	int64_t irqTime = esp_timer_get_time();
+	if( gpio_get_level(_pin) )
+	{ // rising edge (data)
+		if(measuredTime){
+			int data = (irqTime - lastFallingEdge) < (measuredTime >> 1) ? 1 : 0;
+			switch(pulseCounter){
+				case -2: // first start
+					break;
+				case -1: // invalid reading;
+					break;
+				case 0:
+				case 10: // start bit
+					break;
+				case 9: // parity
+				case 19: //parity
+					if(parity!=data)
+					{
+						pulseCounter=-1;
+						break;
+					}
+					parity=0;
+					if(pulseCounter==19) // last bit received
+					{
+						temp=value;
+						pulseCounter=-1;
+					}
+					break;
+				default:
+					value=(value<<1)|data;
+					parity^=data;
+			}
 		}
-		bitCounter = 0;
 	}
-	else if (bitCounter == Bit::lastZero)  {
-		rawData[backUP] = measuredTimeDiff<<1 | 2;	//send measuredTimeDiff for calculating bitThreshold and add prefix "10" to temp
+	else
+	{ 	// falling edge (clk)
+		if(lastFallingEdge) {
+			measuredTime = irqTime - lastFallingEdge; // measure time to previous rising edge (clk)
+			if(measuredTime > 1000) { // First start
+				pulseCounter = 0;
+				value = 0;
+				parity = 0;
+			}
+			else
+			{
+				pulseCounter++;
+			}
+		}
+		lastFallingEdge = irqTime;
 	}
-	else {
-		if (bitCounter == Bit::afterStop) microtime += bitThreshold>>2;	//convert timestamp at stop bit to normal 0 bit
-		if (~rawData[backUP] & 1) measuredTimeDiff += bitThreshold>>1;	//add 1/2 bitThreshold if previous bit was 0 (for normalisation)
-		rawData[backUP] <<= 1;
-		if (measuredTimeDiff < bitThreshold) rawData[backUP] |= 1;
-	}
-	measuredTimeDiff = microtime;
 }
 
 
-bool ZACwire::connectionCheck() {
-	if (heartbeat) timeLastHB = 0;
-	else if (!bitThreshold) {				//use bitThreshold to check if begin() was already called
-		if (begin()) delay(3);
-		else return false;
-	}
-	else if (!timeLastHB) timeLastHB = millis();		//record first missing heartbeat
-	else if (millis() - timeLastHB > timeout) return false;
-	return true;
-}
-
-
-void ZACwire::adjustBitThreshold() {
-	if (bitCounter < Bit::lastZero || bitCounter > Bit::afterStop) return;	//adjust bitThreshold only  before rawData is used for temperature
-	
-	uint16_t newBitThreshold = (rawData[backUP] >> (bitCounter - 4));//separate newBitThreshold from temperature bits
-	newBitThreshold *=  1.25 / 5.25;
-	bitThreshold < newBitThreshold ? ++bitThreshold : --bitThreshold;
-}
-
-
-bool ZACwire::tempCheck(uint16_t rawTemp) {					
-	if (rawTemp >> 14 != 2 || rawTemp & 512) return false;	//check for prefix "10" and stop bit=0
-	
-	bool parity{true};
-	for (uint8_t i{0}; i<9; ++i) parity ^= rawTemp & 1 << i;
-	if (parity) for (uint8_t i{10}; i<14; ++i) parity ^= rawTemp & 1 << i;
-	return parity;
-}

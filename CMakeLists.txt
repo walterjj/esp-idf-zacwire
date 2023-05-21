@@ -1,4 +1,4 @@
-set(req driver)
+set(req driver esp_timer)
 
 idf_component_register(
     SRCS "ZACwire.cpp"

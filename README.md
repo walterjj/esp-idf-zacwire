@@ -1,11 +1,11 @@
-# ZACwire™ Library to read TSic sensors
-[![GitHub issues](https://img.shields.io/github/issues/lebuni/ZACwire-Library.svg)](https://github.com/lebuni/ZACwire-Library/issues/) 
-[![GitHub license](https://img.shields.io/github/license/lebuni/ZACwire-Library.svg)](https://github.com/lebuni/ZACwire-Library/blob/master/LICENSE)
+# ESP-IDF port of ZACwire™ Library to read TSic sensors
+[![GitHub issues](https://img.shields.io/github/issues/walterjj/esp-idf-zacwire.svg)](https://github.com/walterjj/esp-idf-zacwire/issues/) 
+[![GitHub license](https://img.shields.io/github/license/walterjj/esp-idf-zacwire.svg)](https://github.com/walterjj/esp-idf-zacwire/blob/master/LICENSE)
 
 
-Arduino Library to read the ZACwire protocol, wich is used by TSic temperature sensors 206, 306 and 506 on their signal pin.
+ESP-IDF Component to read the ZACwire protocol, wich is used by TSic temperature sensors 206, 306, 506, 716 on their signal pin.
 
-`ZACwire obj(int pin, int Sensor)` tells the library which input pin of the controller (eg. 2) and type of sensor (eg. 306) it should use. Please pay attention that the selected pin supports external interrupts!
+`ZACwire obj(int pin, int sensor)` tells the library which input pin of the controller (eg. 2) and type of sensor (eg. 306) it should use. Please pay attention that the selected pin supports external interrupts!
 
 `.begin()` returns true if a signal is detected on the specific pin and starts the reading via ISRs. It should be started at least 2ms before the first .getTemp().
 
@@ -29,37 +29,27 @@ Arduino Library to read the ZACwire protocol, wich is used by TSic temperature s
 
 ## Example
 ```c++
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "ZACwire.h"
 
-#include <ZACwire.h>
+ZACwire zacWire((gpio_num_t) 21, 716);		// set pin "21" to receive signal from the TSic "716"
 
-ZACwire Sensor(2, 306);		// set pin "2" to receive signal from the TSic "306"
 
-void setup() {
-  Serial.begin(500000);
-  
-  if (Sensor.begin() == true) {     //check if a sensor is connected to the pin
-    Serial.println("Signal found on pin 2");
-  }
-  delay(2);
+void temperature_task(void *pvParameters){
+    float temp;
+    zacWire.begin();
+    while (true)
+    {   temp=zacWire.getTemp();
+        printf("Temperature: %.02f deg.C\n", temp);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 }
 
-void loop() {
-  float Input = Sensor.getTemp();     //get the Temperature in °C
-  
-  if (Input == 222) {
-    Serial.println("Reading failed");
-  }
-  
-  else if (Input == 221) {
-    Serial.println("Sensor not connected");
-  }
-  
-  else {
-    Serial.print("Temp: ");
-    Serial.println(Input);
-  }
-  delay(100);
-}
+extern "C" void app() {
+        xTaskCreate(temperature_task, "temperature_task", configMINIMAL_STACK_SIZE * 8, NULL, 5, NULL);
+        printf("APP START\n");
+
 ```
 
 
@@ -72,15 +62,7 @@ The output of the signal pin switches between GND and V+ to send informations, s
 ![TSIC](https://user-images.githubusercontent.com/62163284/116116897-f5ed5900-a6bb-11eb-95b8-ba8f4ef129cc.png)
 
 
+## Original Library
+The original Adrian Immer's Arduino Library can be found [here](https://github.com/lebuni/ZACwire-Library)
 
-## Adjustment for fast systems
 
-```c++
-void getTemp(uint8_t maxChangeRate)
-```
-`uint8_t maxChangeRate` is measured in °C/s and the default value is 10 °C/s. If you have a very stable system, you can lower that value to help the library detecting outliers. If the maxChangeRate is exceeded, a backup value from 100ms before will be used or error 222 will be returned.
-
-When your system changes temperature really quickly and due to the exceeded maxChangeRate the output of .getTemp() is 222, feel free to increase the value.
-
-## Connection check
-If .getTemp() gives you **221** as an output, the library detected an unusual long period above 255ms without new signals. Please check your cables or try using the RC filter, that is mentioned in the [application note of the TSic](https://www.ist-ag.com/sites/default/files/downloads/ATTSic_E.pdf).
