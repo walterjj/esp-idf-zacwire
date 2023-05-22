@@ -9,6 +9,8 @@
 #include <stdint.h>
 #include "driver/gpio.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
 class ZACwire {
 	public:
@@ -21,15 +23,17 @@ class ZACwire {
 
 		
 	private:
-		const int timeout		{2000};	//timeout in ms to give error 221
+		QueueHandle_t queue;
+		const int timeout{2000}; //timeout in ms to give error if no data is received
 		static void IRAM_ATTR isrHandler(void* ptr);
-		void IRAM_ATTR read();			//ISR to record every rising edge
+		void IRAM_ATTR read();	//ISR to record every rising edge
 		gpio_num_t _pin;
 		int16_t _sensor;
-		int64_t lastFallingEdge;			//timestamp of last falling edge
-		int64_t measuredTime;			//measured time between falling edges of signal
+		int64_t lastFallingEdge; //timestamp of last falling edge
+		int64_t measuredTime;	//measured time between falling edges of signal
+		int strobeTime; // strobe time in uS measured during start bit
 		volatile int pulseCounter;
-		volatile int value, temp;
+		volatile int value; //, temp;
 		bool parity;
 };
 

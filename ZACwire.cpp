@@ -10,7 +10,7 @@
 #include "esp_timer.h"
 
 ZACwire::ZACwire(gpio_num_t pin, int16_t sensor) : _pin{pin}, _sensor{sensor}
-{
+{	queue=xQueueCreate(1, sizeof(int));
 	pulseCounter = -2;
 }
 
@@ -27,16 +27,21 @@ bool ZACwire::begin()
 
 float ZACwire::getTemp()
 {	int64_t time = esp_timer_get_time();
-	while(pulseCounter!=-1){ // wait for end of reading
+	
+	/*while(pulseCounter!=-1){ // wait for end of reading
 		if(pulseCounter==-3) // error
 			return errorMisreading;
 		if(esp_timer_get_time()-time > timeout*1000)
 			return errorNotConnected;
-	}
+	}*/
 	// return temperature in °C
-	gpio_intr_disable(_pin);
-	int temp = this->temp;
-	gpio_intr_enable(_pin);
+	///gpio_intr_disable(_pin);
+	//int temp = this->temp;
+	//gpio_intr_enable(_pin); */
+	int temp;
+	if(!xQueueReceive(queue, &temp, pdMS_TO_TICKS(timeout))){
+		return errorNotConnected;
+	};
 	if(!temp)
 		return errorMisreading;
 	if (_sensor < 316) // LT=-50 HT=150 11 bits
@@ -68,7 +73,8 @@ void ZACwire::read()
 	if( gpio_get_level(_pin) )
 	{ // rising edge (data)
 		if(measuredTime){
-			int data = (irqTime - lastFallingEdge) < (measuredTime >> 1) ? 1 : 0;
+			int micros = irqTime - lastFallingEdge;
+			int data = micros < strobeTime ? 1 : 0;
 			switch(pulseCounter){
 				case -3: // error
 				case -2: // first start
@@ -76,6 +82,7 @@ void ZACwire::read()
 					break;
 				case 0:
 				case 10: // start bit
+					strobeTime = micros;
 					break;
 				case 9: // parity
 				case 19: //parity
@@ -87,7 +94,8 @@ void ZACwire::read()
 					parity=0;
 					if(pulseCounter==19) // last bit received
 					{
-						temp=value;
+						//temp=value;
+						xQueueOverwriteFromISR(queue, (const void *) &value, NULL);
 						pulseCounter=-1;
 					}
 					break;
