@@ -12,20 +12,18 @@
 
 class ZACwire {
 	public:
+		static const int errorNotConnected	{-400};
+		static const int errorMisreading	{-401};
 		explicit ZACwire(gpio_num_t inputPin, int16_t sensor=716);
 		bool begin();	 //start reading
 		float getTemp();	//return temperature in °C
 		void end();
+
 		
 	private:
 		const int timeout		{2000};	//timeout in ms to give error 221
-		const int errorNotConnected	{221};
-		const int errorMisreading	{222};
-		
 		static void IRAM_ATTR isrHandler(void* ptr);
-		
 		void IRAM_ATTR read();			//ISR to record every rising edge
-
 		gpio_num_t _pin;
 		int16_t _sensor;
 		int64_t lastFallingEdge;			//timestamp of last falling edge

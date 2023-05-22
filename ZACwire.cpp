@@ -28,6 +28,8 @@ bool ZACwire::begin()
 float ZACwire::getTemp()
 {	int64_t time = esp_timer_get_time();
 	while(pulseCounter!=-1){ // wait for end of reading
+		if(pulseCounter==-3) // error
+			return errorMisreading;
 		if(esp_timer_get_time()-time > timeout*1000)
 			return errorNotConnected;
 	}
@@ -35,6 +37,8 @@ float ZACwire::getTemp()
 	gpio_intr_disable(_pin);
 	int temp = this->temp;
 	gpio_intr_enable(_pin);
+	if(!temp)
+		return errorMisreading;
 	if (_sensor < 316) // LT=-50 HT=150 11 bits
 		return ((temp * 200.0 / 2047) - 50.0);
 	else if(_sensor==316) // LT=-50°C HT=150°C 14 bits
@@ -66,9 +70,9 @@ void ZACwire::read()
 		if(measuredTime){
 			int data = (irqTime - lastFallingEdge) < (measuredTime >> 1) ? 1 : 0;
 			switch(pulseCounter){
+				case -3: // error
 				case -2: // first start
-					break;
-				case -1: // invalid reading;
+				case -1: // reading done;
 					break;
 				case 0:
 				case 10: // start bit
@@ -77,7 +81,7 @@ void ZACwire::read()
 				case 19: //parity
 					if(parity!=data)
 					{
-						pulseCounter=-1;
+						pulseCounter=-3;
 						break;
 					}
 					parity=0;

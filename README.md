@@ -41,7 +41,15 @@ void temperature_task(void *pvParameters){
     zacWire.begin();
     while (true)
     {   temp=zacWire.getTemp();
-        printf("Temperature: %.02f deg.C\n", temp);
+        if(temp==ZACwire::errorMisreading) {
+            printf("Error reading temperature\n");
+        }
+        else if(temp==ZACwire::errorNotConnected) {
+            printf("No sensor connected\n");
+        }
+        else {
+          printf("Temperature: %.02f deg.C\n", temp);
+        }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
